@@ -2,10 +2,10 @@ use crate::args::Args;
 use crate::exec::{self, Status};
 use crate::fmt::color_repo;
 use crate::util::get_provider;
-use crate::{debug_enabled, printtr, repo};
+use crate::{alpm_debug_enabled, help, printtr, repo};
 
 use std::env::consts::ARCH;
-use std::env::var;
+use std::env::{set_var, var};
 use std::fmt;
 use std::fs::File;
 use std::io::{stdin, BufRead};
@@ -458,6 +458,9 @@ impl Ini for Config {
         let err = match cb.kind {
             CallbackKind::Section(section) => {
                 self.section = Some(section.to_string());
+                if !matches!(section, "options" | "bin" | "env") {
+                    eprintln!("{}", tr!("error: unknown section '{}'", section));
+                }
                 Ok(())
             }
             CallbackKind::Directive(_, key, value) => self.parse_directive(key, value),
@@ -567,7 +570,7 @@ impl Config {
         if self.help {
             match self.op {
                 Op::GetPkgBuild | Op::Show | Op::Yay => {
-                    help();
+                    help::help();
                     std::process::exit(0);
                 }
                 _ => {
@@ -759,8 +762,23 @@ impl Config {
         match section {
             "options" => self.parse_option(key, value),
             "bin" => self.parse_bin(key, value),
-            _ => bail!(tr!("unknown section '{}'", section)),
+            "env" => self.parse_env(key, value),
+            _ => Ok(()),
         }
+    }
+
+    fn parse_env(&mut self, key: &str, value: Option<&str>) -> Result<()> {
+        let value = value.context(tr!("key can not be empty"))?;
+
+        ensure!(!key.is_empty(), tr!("key can not be empty"));
+        ensure!(!key.contains('\0'), tr!("key can not contain null bytes"));
+        ensure!(
+            !value.contains('\0'),
+            tr!("value can not contain null bytes")
+        );
+
+        set_var(key, value);
+        Ok(())
     }
 
     fn parse_bin(&mut self, key: &str, value: Option<&str>) -> Result<()> {
@@ -909,11 +927,6 @@ impl Config {
     }
 }
 
-fn help() {
-    let help = include_str!("../help");
-    print!("{}", help);
-}
-
 pub fn version() {
     let ver = option_env!("PARU_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
     print!("paru v{}", ver);
@@ -993,7 +1006,7 @@ fn log(level: LogLevel, msg: &str, color: &mut Colors) {
     match level {
         LogLevel::WARNING => eprint!("{} {}", warn.paint("::"), msg),
         LogLevel::ERROR => eprint!("{} {}", err.paint("error:"), msg),
-        LogLevel::DEBUG if debug_enabled() => eprint!("debug: <alpm> {}", msg),
+        LogLevel::DEBUG if alpm_debug_enabled() => eprint!("debug: <alpm> {}", msg),
         _ => (),
     }
 }
